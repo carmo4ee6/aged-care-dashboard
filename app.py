@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+import pydeck as pdk
 
 st.set_page_config(page_title="Residential Aged Care – Provider", layout="wide")
 
@@ -68,7 +69,11 @@ def style_table(df: pd.DataFrame, numeric_columns=None, formatters=None):
 DATA_PATH = "Service-List-2025-Australia_300126.xlsx"
 df = load_data(DATA_PATH)
 
-st.title("Residential Aged Care: Provider & Competition Dashboard")
+logo_col, title_col = st.columns([1, 5])
+with logo_col:
+    st.image("malogo1.svg", width=140)
+with title_col:
+    st.title("Residential Aged Care Provider Dashboard")
 
 # Sidebar filters
 st.sidebar.header("Filters")
@@ -118,7 +123,7 @@ c1.metric("Facilities", f"{len(dff):,}")
 c2.metric("Providers", f"{dff['Provider Name'].nunique():,}")
 c3.metric("Residential places", f"{int(dff['Residential Places'].fillna(0).sum()):,}")
 funding_sum = dff["2024-25 Australian Government Funding"].fillna(0).sum()
-c4.metric("Govt funding (sum)", format_money(funding_sum))
+c4.metric("Total government funding", format_money(funding_sum))
 
 places_sum = dff["Residential Places"].fillna(0).sum()
 avg_funding_per_facility = funding_sum / len(dff) if len(dff) else np.nan
@@ -146,8 +151,38 @@ left, right = st.columns([1.2, 1])
 with left:
     st.subheader("Map")
     map_df = dff.dropna(subset=["Latitude", "Longitude"]).copy()
-    # Streamlit's built-in map uses lat/lon columns named exactly like this:
-    st.map(map_df.rename(columns={"Latitude": "lat", "Longitude": "lon"}))
+    if map_df.empty:
+        st.info("No map points for the current filters.")
+    else:
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=map_df,
+            get_position="[Longitude, Latitude]",
+            get_radius=1200,
+            radius_min_pixels=5,
+            radius_max_pixels=18,
+            get_fill_color=[214, 0, 143, 230],
+            get_line_color=[255, 255, 255, 255],
+            line_width_min_pixels=1,
+            stroked=True,
+            pickable=True,
+        )
+        view_state = pdk.ViewState(
+            latitude=-26.5,
+            longitude=134.5,
+            zoom=2.7,
+            pitch=0,
+            bearing=0,
+        )
+        st.pydeck_chart(
+            pdk.Deck(
+                layers=[layer],
+                initial_view_state=view_state,
+                map_style="light",
+                tooltip={"text": "{Service Name}\n{Provider Name}\n{Physical Suburb}, {Physical State}"},
+            ),
+            use_container_width=True,
+        )
 
 with right:
     st.subheader("Top providers by residential places")
@@ -307,19 +342,22 @@ provider_share_pct = (
 top3_share_pct = provider_share_pct.head(3).sum() if not provider_share_pct.empty else np.nan
 hhi = np.square(provider_share_pct).sum() if not provider_share_pct.empty else np.nan
 
-summary = {
-    "Facilities in radius": f"{len(within):,}",
-    "Providers in radius": f"{within['Provider Name'].nunique():,}",
-    "Residential places in radius": f"{int(radius_places):,}",
-    "Govt funding in radius": format_money(float(within["2024-25 Australian Government Funding"].fillna(0).sum())),
-    "Top-3 share (by places)": f"{top3_share_pct:,.1f}%" if pd.notna(top3_share_pct) else "N/A",
-    "HHI (by places)": f"{hhi:,.0f}" if pd.notna(hhi) else "N/A",
-}
-summary["Funding per place in radius"] = (
-    format_money(float(within["2024-25 Australian Government Funding"].fillna(0).sum() / radius_places))
-    if radius_places else "N/A"
+funding_in_radius = float(within["2024-25 Australian Government Funding"].fillna(0).sum())
+funding_per_place_in_radius = (funding_in_radius / radius_places) if radius_places else np.nan
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Facilities in radius", f"{len(within):,}")
+m2.metric("Providers in radius", f"{within['Provider Name'].nunique():,}")
+m3.metric("Residential places in radius", f"{int(radius_places):,}")
+m4.metric("Govt funding in radius", format_money(funding_in_radius))
+
+m5, m6, m7 = st.columns(3)
+m5.metric(
+    "Funding per place in radius",
+    format_money(funding_per_place_in_radius) if pd.notna(funding_per_place_in_radius) else "N/A",
 )
-st.write(summary)
+m6.metric("Top-3 share (by places)", f"{top3_share_pct:,.1f}%" if pd.notna(top3_share_pct) else "N/A")
+m7.metric("HHI (by places)", f"{hhi:,.0f}" if pd.notna(hhi) else "N/A")
 
 comp = (
     within.groupby(["Provider Name", "Organisation Type"], dropna=False)["Residential Places"]
